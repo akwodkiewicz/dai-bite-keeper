@@ -1,0 +1,18 @@
+{
+  "name": "makerdao-bite-keeper",
+  "version": "1.0.0",
+  "description": "Bite keeper for Dai currency",
+  "main": "app.js",
+  "dependencies": {
+    "@makerdao/dai": "^0.7.1",
+    "web3": "^1.0.0-beta.36",
+    "winston": "^3.1.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "start": "node app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT"
+}
