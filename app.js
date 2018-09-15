@@ -8,6 +8,8 @@ const maker = Maker.create("kovan", {
     privateKey: fs.readFileSync("./.privatekey", "utf8")
 });
 
+var cdpService;
+
 const logger = winston.createLogger({
     level: "debug",
     format: winston.format.timestamp(),
@@ -113,77 +115,108 @@ async function groupToSafeAndUnsafe(cdpArray) {
     return [safeCdps, unsafeCdps];
 }
 
-async function biteBotMain() {
-    var cdp, hexCdpId;
-
-    while (true) {
-        for (let cdpId = 750; cdpId < 760; cdpId++) {
-            hexCdpId = conversion.numberToBytes32(cdpId);
-
-            try {
-                cdp = await maker.getCdp(cdpId);
-            } catch {
-                logger.log(`Cdp #${cdpId} does not exist!`);
-                continue;
-            }
-
-            logger.log(`Checking if cdp #${cdpId} is safe...`);
-            let isSafe;
-            try {
-                isSafe = await cdp.isSafe();
-            } catch {
-                logger.log(`Cdp #${cdpId} is not available`);
-                continue;
-            }
-            if (isSafe) {
-                logger.log(`Cdp #${cdpId} is safe :(`);
-            } else {
-                logger.log(`Cdp #${cdpId} is ready to be bitten!`);
-                break;
-            }
-        }
-
-        const bitePromise = cdp._cdpService
-            ._tubContract()
-            .bite(hexCdpId, { gasLimit: 4000000 });
-        bitePromise.onPending(() => logger.log("pending!"));
-        bitePromise.onMined(() => logger.log("mined!"));
-        bitePromise.onFinalized(() => logger.log("finalized!"));
-
-        const biteRes = await bitePromise;
-        await bitePromise.confirm(5);
-    }
-}
-
-async function bite(unsafeCdps) {
+async function biteMany(unsafeCdps) {
     if (unsafeCdps.length === 0) {
         logger.info("No CDPs to bite!");
         return;
     }
 
-    const bitePromises = unsafeCdps.map(async ([cdpId, cdp]) => {
+    let promises = [];
+    for (let i = 0; i < unsafeCdps.length; i++) {
+        let cdpId = unsafeCdps[i][0];
         let hexCdpId = conversion.numberToBytes32(cdpId);
-        let bitePromise = cdp._cdpService
+
+        const bitePromise = cdpService
             ._tubContract()
             .bite(hexCdpId, { gasLimit: 4000000 });
-        /* or without gasLimit parameter (but still undocumented!):
-            let bitePromise = cdp.bite(cdpId);
-            */
-        bitePromise.onPending(() => logger.log("pending!"));
-        bitePromise.onMined(() => logger.log("mined!"));
-        bitePromise.onFinalized(() => logger.log("finalized!"));
-    });
+        bitePromise.onPending(() => logger.debug(`#${cdpId} pending!`));
+        bitePromise.onMined(() => logger.debug(`#${cdpId} mined!`));
+        bitePromise.onFinalized(() => logger.debug(`#${cdpId} finalized!`));
+        promises.push(bitePromise);
+    }
 
-    const minedBitePromises = Promise.all(bitePromises).then(
-        logger.info("All 'bite' transactions have been mined!")
-    );
-    Promise.all(
-        minedBitePromises.map(bitePromise => bitePromise.confirm(3))
-    ).then(logger.info("All 'bite' transactions have 3-block confirmations!"));
+    try {
+        await Promise.all(promises);
+    } catch (error) {
+        logger.error(error.message);
+        logger.error("Not all transactions were finalized!");
+        return;
+    }
+
+    logger.info("All 'bite' transactions have been finalized!");
+
+    try {
+        await Promise.all(promises.map(bitePromise => bitePromise.confirm(3)));
+    } catch (error) {
+        logger.error(error.message);
+        logger.error("Not all transactions could be confirmed!");
+        return;
+    }
+    logger.info("All 'bite' transactions have 3-block confirmations!");
 }
 
-async function monitoring() {
-    while (true) {}
+async function monitoring(safeCdps) {
+    let removed = [];
+    let processing = [];
+
+    while (true) {
+        if (safeCdps.length === 0) {
+            logger.info("No more safe CDPs");
+            return;
+        }
+        await Promise.all(
+            safeCdps
+                .filter(([cdpId, cdp]) => !removed.includes(cdpId))
+                .filter(([cdpId, cdp]) => !processing.includes(cdpId))
+                .map(async ([cdpId, cdp]) => {
+                    try {
+                        let isSafe = await cdp.isSafe();
+                        if (isSafe) {
+                            logger.debug(`CDP ${cdpId} is still safe`);
+                            return;
+                        }
+                        logger.info(
+                            `CDP #${cdpId} is not safe anymore! Sending bite transaction...`
+                        );
+                        processing.push(cdpId);
+
+                        let hexCdpId = conversion.numberToBytes32(cdpId);
+                        const bitePromise = cdpService
+                            ._tubContract()
+                            .bite(hexCdpId, { gasLimit: 4000000 });
+                        bitePromise.onPending(() => logger.debug(`#${cdpId} pending!`));
+                        bitePromise.onMined(() => logger.debug(`#${cdpId} mined!`));
+                        bitePromise.onFinalized(() =>
+                            logger.debug(`#${cdpId} finalized!`)
+                        );
+                        bitePromise
+                            .then(function() {
+                                logger.info(
+                                    `Bite transaction for #${cdpId} has been finalized!`
+                                );
+                                logger.info(
+                                    `Removing successfully bitten CDP #${cdpId} from monitored set`
+                                );
+                                processing = processing.filter(item => item !== cdpId);
+                                removed.push(cdpId);
+                            })
+                            .then(function() {
+                                bitePromise.confirm(3).then(function() {
+                                    logger.info(
+                                        `Bite transaction for #${cdpId} has 3-block confirmation!`
+                                    );
+                                });
+                            });
+                    } catch (error) {
+                        logger.error(error);
+                        logger.warn(
+                            `Removing unavailable CDP #${cdpId} from monitored set`
+                        );
+                        removed.push(cdpId);
+                    }
+                })
+        );
+    }
 }
 
 async function main() {
@@ -191,6 +224,7 @@ async function main() {
 
     await maker.authenticate();
     logger.info("Authenticated");
+    cdpService = maker.service("cdp");
 
     logger.info("Preparing list of available CDPs...");
     const cdps = await getAvailableCdps(args[0], args[1]);
@@ -208,10 +242,12 @@ async function main() {
     logger.info(unsafeCdps.map(([cdpId, cdp]) => cdpId));
 
     logger.info(`Starting 'bite' operation`);
-    await bite(unsafeCdps);
+    await biteMany(unsafeCdps);
 
     logger.info(`Starting safe CDPs monitoring. Press Ctrl+C to quit.`);
     await monitoring(safeCdps);
+
+    logger.info("Exiting");
 }
 
 main()
