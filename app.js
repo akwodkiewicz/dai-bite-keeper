@@ -182,14 +182,16 @@ async function bite(unsafeCdps) {
     ).then(logger.info("All 'bite' transactions have 3-block confirmations!"));
 }
 
-async function monitoring() {}
+async function monitoring() {
+    while (true) {}
+}
 
 async function main() {
     const args = parseArguments();
 
     await maker.authenticate();
     logger.info("Authenticated");
-    return;
+
     logger.info("Preparing list of available CDPs...");
     const cdps = await getAvailableCdps(args[0], args[1]);
 
