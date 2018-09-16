@@ -27,20 +27,27 @@ const logger = winston.createLogger({
 });
 
 function parseArguments() {
-    let a, b;
+    let a, b, c;
 
     if (process.argv.length <= 2) {
         a = 1;
         b = 100;
+        c = false;
     } else if (process.argv.length == 3) {
         a = parseInt(process.argv[2]);
         b = a + 100;
+        c = false;
+    } else if (process.argv.length == 4) {
+        a = parseInt(process.argv[2]);
+        b = parseInt(process.argv[3]);
+        c = false;
     } else {
         a = parseInt(process.argv[2]);
         b = parseInt(process.argv[3]);
+        c = process.argv[4] === "1" ? true : false;
     }
 
-    return [a, b];
+    return [a, b, c];
 }
 
 async function getAvailableCdps(first = 1, last = 1000) {
@@ -110,11 +117,13 @@ async function biteMany(unsafeCdps) {
             ._tubContract()
             .bite(hexCdpId, { gasLimit: 4000000 });
         bitePromise.onPending(() => logger.debug(`#${cdpId} pending!`));
-        bitePromise.onMined(() => logger.debug(`#${cdpId} mined!`));
+        bitePromise.onMined(() => {
+            logger.debug(`#${cdpId} mined!`);
+            logger.info("💣💥 Here comes the BOOM operation 💣💥");
+        });
         bitePromise.onFinalized(() => logger.debug(`#${cdpId} finalized!`));
         promises.push(bitePromise);
     }
-
     try {
         await Promise.all(promises);
     } catch (error) {
@@ -122,9 +131,7 @@ async function biteMany(unsafeCdps) {
         logger.error("Not all transactions were finalized!");
         return;
     }
-
     logger.info("All 'bite' transactions have been finalized!");
-
     try {
         await Promise.all(promises.map(bitePromise => bitePromise.confirm(3)));
     } catch (error) {
@@ -134,13 +141,11 @@ async function biteMany(unsafeCdps) {
     }
     logger.info("All 'bite' transactions have 3-block confirmations!");
 }
-
 async function monitoring(safeCdps) {
     let removed = [];
     let processing = [];
-
     while (true) {
-        if (safeCdps.length === 0) {
+        if (safeCdps.length === removed.length) {
             logger.info("No more safe CDPs");
             return;
         }
@@ -159,13 +164,15 @@ async function monitoring(safeCdps) {
                             `CDP #${cdpId} is not safe anymore! Sending bite transaction...`
                         );
                         processing.push(cdpId);
-
                         let hexCdpId = conversion.numberToBytes32(cdpId);
                         const bitePromise = cdpService
                             ._tubContract()
                             .bite(hexCdpId, { gasLimit: 4000000 });
                         bitePromise.onPending(() => logger.debug(`#${cdpId} pending!`));
-                        bitePromise.onMined(() => logger.debug(`#${cdpId} mined!`));
+                        bitePromise.onMined(() => {
+                            logger.debug(`#${cdpId} mined!`);
+                            logger.info("💣💥 Here comes the BUST operation 💣💥");
+                        });
                         bitePromise.onFinalized(() =>
                             logger.debug(`#${cdpId} finalized!`)
                         );
@@ -198,38 +205,32 @@ async function monitoring(safeCdps) {
         );
     }
 }
-
 async function main() {
     const args = parseArguments();
-
     await maker.authenticate();
     logger.info("Authenticated");
     cdpService = maker.service("cdp");
-
     logger.info("Preparing list of available CDPs...");
     const cdps = await getAvailableCdps(args[0], args[1]);
-
     logger.info("Available CDPs:");
     logger.info(cdps.map(([cdpId, cdp]) => cdpId));
-
     logger.info("Grouping CDPs into safe and unsafe...");
     const [safeCdps, unsafeCdps] = await groupToSafeAndUnsafe(cdps);
-
     logger.info("Safe CDPs:");
     logger.info(safeCdps.map(([cdpId, cdp]) => cdpId));
-
     logger.info("Unsafe CDPs:");
     logger.info(unsafeCdps.map(([cdpId, cdp]) => cdpId));
-
-    logger.info(`Starting 'bite' operation`);
-    await biteMany(unsafeCdps);
-
-    logger.info(`Starting safe CDPs monitoring. Press Ctrl+C to quit.`);
-    await monitoring(safeCdps);
-
+    if (!args[2]) {
+        logger.info(`Starting 'bite' operation`);
+        await biteMany(unsafeCdps);
+        logger.info(`Starting safe CDPs monitoring. Press Ctrl+C to quit.`);
+        await monitoring(safeCdps);
+    } else {
+        logger.info(`Starting safe CDPs monitoring. Press Ctrl+C to quit.`);
+        await monitoring(safeCdps.concat(unsafeCdps));
+    }
     logger.info("Exiting");
 }
-
 main()
     .catch(e => {
         logger.error(e.message);
