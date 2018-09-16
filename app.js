@@ -26,26 +26,6 @@ const logger = winston.createLogger({
     ]
 });
 
-// async function benchmark() {
-//     var numOfIterations = 1000;
-//
-//     let start = process.hrtime();
-//     logger.log("Started on: " + start);
-//     for (let index = 1; index <= numOfIterations; index++) {
-//         try {
-//             await maker.getCdp(index);
-//         } catch {
-//             //
-//         }
-//     }
-//     let stop = process.hrtime();
-//     logger.log("Stopped on: " + stop);
-//     let elapsedTime =
-//         (stop[0] - start[0]) * 1000 + (stop[1] - start[1]) / 1000000;
-//     logger.log(`Elapsed time: ${elapsedTime} ms`);
-//     logger.log(`Time per call: ${elapsedTime / numOfIterations} ms`);
-// }
-
 function parseArguments() {
     let a, b;
 
